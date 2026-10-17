@@ -104,6 +104,10 @@ type Config struct {
 	OIDCClientID     string `json:"oidcClientId,omitempty"`     // OAuth2 client ID for token exchange
 	OIDCClientSecret string `json:"oidcClientSecret,omitempty"` // OAuth2 client secret for token exchange
 	ConnectorID      string `json:"connectorId,omitempty"`      // Connector ID for providers that support it (e.g., "ssh" for Dex)
+	// AttestationPolicy controls the third verification leg: "optional" (default) verifies
+	// attestations when present and refuses present-but-broken ones; "required" additionally
+	// refuses tools that carry no attestations.
+	AttestationPolicy string `json:"attestationPolicy,omitempty"`
 }
 
 // DbtConfig is the internal config of dbt.
@@ -129,6 +133,8 @@ type ServerConfig struct {
 	OIDCClientSecret string `json:"oidcClientSecret,omitempty"`
 	OIDCUsername     string `json:"oidcUsername,omitempty"`
 	ConnectorID      string `json:"connectorId,omitempty"`
+	// AttestationPolicy is the per-server policy; it takes precedence over the top-level default.
+	AttestationPolicy string `json:"attestationPolicy,omitempty"`
 }
 
 // MultiServerConfig holds the top-level config with multiple servers.
@@ -152,6 +158,8 @@ type MultiServerConfig struct {
 	OIDCClientID     string `json:"oidcClientId,omitempty"`
 	OIDCClientSecret string `json:"oidcClientSecret,omitempty"`
 	ConnectorID      string `json:"connectorId,omitempty"`
+	// AttestationPolicy is the top-level default; a per-server value takes precedence.
+	AttestationPolicy string `json:"attestationPolicy,omitempty"`
 }
 
 // DbtServerEnv is the environment variable for selecting a server. Use GetServerEnvVar() instead.
@@ -230,6 +238,7 @@ func (c *MultiServerConfig) toLegacyServer() (server ServerConfig) {
 	server.OIDCClientID = c.OIDCClientID
 	server.OIDCClientSecret = c.OIDCClientSecret
 	server.ConnectorID = c.ConnectorID
+	server.AttestationPolicy = c.AttestationPolicy
 	return server
 }
 
@@ -284,6 +293,11 @@ func (c *MultiServerConfig) ToConfig(server ServerConfig) (config Config) {
 		config.ConnectorID = server.ConnectorID
 	} else {
 		config.ConnectorID = c.ConnectorID
+	}
+	if server.AttestationPolicy != "" {
+		config.AttestationPolicy = server.AttestationPolicy
+	} else {
+		config.AttestationPolicy = c.AttestationPolicy
 	}
 	return config
 }
@@ -477,6 +491,13 @@ func LoadDbtConfig(homedir string, verbose bool) (config Config, err error) {
 		return config, err
 	}
 
+	// Fail closed on an unrecognized attestation policy: a typo must never silently
+	// downgrade the verification chain to optional.
+	err = validateAttestationPolicy(config.AttestationPolicy)
+	if err != nil {
+		return config, err
+	}
+
 	return config, err
 }
 
@@ -513,6 +534,20 @@ func LoadMultiServerConfig(homedir string, verbose bool) (config MultiServerConf
 	err = json.Unmarshal(mdBytes, &config)
 	if err != nil {
 		return config, err
+	}
+
+	// Fail closed on an unrecognized attestation policy, both top-level and per-server.
+	err = validateAttestationPolicy(config.AttestationPolicy)
+	if err != nil {
+		return config, err
+	}
+
+	for name, server := range config.Servers {
+		err = validateAttestationPolicy(server.AttestationPolicy)
+		if err != nil {
+			err = errors.Wrapf(err, "server %q", name)
+			return config, err
+		}
 	}
 
 	return config, err
@@ -669,7 +704,7 @@ func (dbt *DBT) IsCurrent(binaryPath string) (ok bool, err error) {
 }
 
 // UpgradeInPlace upgrades dbt in place.
-func (dbt *DBT) UpgradeInPlace(binaryPath string) (err error) {
+func (dbt *DBT) UpgradeInPlace(homedir string, binaryPath string) (err error) {
 	dbt.VerboseOutput("Attempting upgrade in place")
 	tmpDir, mkdirErr := os.MkdirTemp("", BrandBinary)
 	if mkdirErr != nil {
@@ -711,40 +746,54 @@ func (dbt *DBT) UpgradeInPlace(binaryPath string) (err error) {
 	}
 
 	if ok {
+		// Third leg: the incoming binary must satisfy the attestation policy before it
+		// replaces this one. Present-but-broken refuses the upgrade; required-absent was
+		// already refused at fetch time.
+		err = dbt.checkUpgradeAttestations(homedir, latestDbtVersionURL, newBinaryFile)
+		if err != nil {
+			return err
+		}
+
 		dbt.VerboseOutput("  It's good.  Moving it into place.")
-		// This is slightly more painful than it might otherwise be in order to handle modern linux systems where /tmp is tmpfs (can't just rename cross partition).
-		// So instead we read the file, write the file to a temp file, and then rename.
-		newBinaryTempFile := fmt.Sprintf("%s.new", binaryPath)
 
-		b, readErr := os.ReadFile(newBinaryFile)
-		if readErr != nil {
-			err = errors.Wrapf(readErr, "failed to read new binary file %s", newBinaryFile)
+		err = moveBinaryIntoPlace(newBinaryFile, binaryPath)
+		if err != nil {
 			return err
 		}
+	}
 
-		dbt.VerboseOutput("  Writing to %s", newBinaryTempFile)
+	return err
+}
 
-		writeErr := os.WriteFile(newBinaryTempFile, b, 0755)
-		if writeErr != nil {
-			err = errors.Wrapf(writeErr, "failed to write new binary temp file %s", newBinaryTempFile)
-			return err
-		}
+// moveBinaryIntoPlace replaces binaryPath with the contents of newBinaryFile. This is
+// slightly more painful than it might otherwise be in order to handle modern linux
+// systems where /tmp is tmpfs (can't just rename cross partition). So instead we read
+// the file, write the file to a temp file, and then rename.
+func moveBinaryIntoPlace(newBinaryFile string, binaryPath string) (err error) {
+	newBinaryTempFile := fmt.Sprintf("%s.new", binaryPath)
 
-		dbt.VerboseOutput("  renaming %s to %s", newBinaryTempFile, binaryPath)
+	b, readErr := os.ReadFile(newBinaryFile)
+	if readErr != nil {
+		err = errors.Wrapf(readErr, "failed to read new binary file %s", newBinaryFile)
+		return err
+	}
 
-		renameErr := os.Rename(newBinaryTempFile, binaryPath)
-		if renameErr != nil {
-			err = errors.Wrap(renameErr, "failed to move new binary into place")
-			return err
-		}
+	writeErr := os.WriteFile(newBinaryTempFile, b, 0755)
+	if writeErr != nil {
+		err = errors.Wrapf(writeErr, "failed to write new binary temp file %s", newBinaryTempFile)
+		return err
+	}
 
-		dbt.VerboseOutput("  Chmodding %s to 0755", binaryPath)
+	renameErr := os.Rename(newBinaryTempFile, binaryPath)
+	if renameErr != nil {
+		err = errors.Wrap(renameErr, "failed to move new binary into place")
+		return err
+	}
 
-		chmodErr := os.Chmod(binaryPath, 0755)
-		if chmodErr != nil {
-			err = errors.Wrap(chmodErr, "failed to chmod new dbt binary")
-			return err
-		}
+	chmodErr := os.Chmod(binaryPath, 0755)
+	if chmodErr != nil {
+		err = errors.Wrap(chmodErr, "failed to chmod new dbt binary")
+		return err
 	}
 
 	return err
@@ -867,6 +916,14 @@ func (dbt *DBT) RunTool(version string, args []string, homedir string, offline b
 		return err
 	}
 
+	// download the attestations, if the repository publishes them. Under a
+	// required policy, absence is refused here — at download time, the earliest and
+	// clearest point — rather than at verify time.
+	err = dbt.FetchAttestations(toolURL, localPath, toolName)
+	if err != nil {
+		return err
+	}
+
 	// finally run it
 	err = dbt.verifyAndRun(homedir, args)
 
@@ -914,6 +971,13 @@ func (dbt *DBT) verifyAndRun(homedir string, args []string) (err error) {
 
 		if !signatureOk {
 			err = fmt.Errorf("signature of %s failed to verify", toolName)
+			return err
+		}
+
+		// Third leg: attestations. Present-but-broken is always fatal; absence is fatal
+		// only under a required policy.
+		err = dbt.checkAttestationPolicy(homedir, localPath, toolName)
+		if err != nil {
 			return err
 		}
 

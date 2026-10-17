@@ -24,7 +24,8 @@
 //	                   -X main.issuerURL=https://dex.example.com \
 //	                   -X main.oidcAudience=https://dbt.example.com \
 //	                   -X main.oidcClientID=dbt-ssh \
-//	                   -X main.connectorID=ssh" \
+//	                   -X main.connectorID=ssh \
+//	                   -X main.attestationPolicy=required" \
 //	    -o dbt-installer ./cmd/dbt-installer
 package main
 
@@ -73,22 +74,28 @@ var (
 	// Use "ssh" for SSH-OIDC token exchange.
 	connectorID string
 
+	// attestationPolicy is the dbt attestation policy to write into the generated
+	// config: "required" makes dbt refuse tools lacking signed SBOM + SLSA provenance
+	// attestations; empty means optional (verify when present).
+	attestationPolicy string
+
 	// version is the installer version.
 	version = "dev"
 )
 
 func main() {
 	config := &installer.Config{
-		ServerURL:        serverURL,
-		ServerName:       serverName,
-		ToolsURL:         toolsURL,
-		S3Region:         s3Region,
-		IssuerURL:        issuerURL,
-		OIDCAudience:     oidcAudience,
-		OIDCClientID:     oidcClientID,
-		OIDCClientSecret: oidcClientSecret,
-		ConnectorID:      connectorID,
-		Version:          version,
+		ServerURL:         serverURL,
+		ServerName:        serverName,
+		ToolsURL:          toolsURL,
+		S3Region:          s3Region,
+		IssuerURL:         issuerURL,
+		OIDCAudience:      oidcAudience,
+		OIDCClientID:      oidcClientID,
+		OIDCClientSecret:  oidcClientSecret,
+		ConnectorID:       connectorID,
+		AttestationPolicy: attestationPolicy,
+		Version:           version,
 	}
 
 	installer.Run(config)

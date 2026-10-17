@@ -275,6 +275,15 @@ func setUp() (err error) {
 				return err
 			}
 
+			// The fake home also carries the fixture truststore: the upgrade flow verifies
+			// signatures (binary and attestations) against it.
+			trustPath := fmt.Sprintf("%s/%s", c.homedir, TruststorePath)
+			writeErr = os.WriteFile(trustPath, []byte(trustfileContents), 0644)
+			if writeErr != nil {
+				err = errors.Wrapf(writeErr, "Error writing truststore file to %s", trustPath)
+				return err
+			}
+
 		}
 
 		setup = true
@@ -495,6 +504,56 @@ func createTestFilesB(toolRoot string, version string, dbtRoot string) (testFile
 func createTestFilesC(toolRoot string, version string, dbtRoot string) (testFiles map[string]*testFile) {
 	testFiles = make(map[string]*testFile)
 	files := []*testFile{
+		// Attestation files (latest version only — older versions double as
+		// the no-attestation fixtures for the policy tests).
+		{
+			Name:     "catalog_linux_amd64.att.json",
+			FilePath: fmt.Sprintf("%s/catalog/%s/linux/amd64/catalog.att.json", toolRoot, version),
+			URLPath:  fmt.Sprintf("/dbt-tools/catalog/%s/linux/amd64/catalog.att.json", version),
+			Repo:     "dbt-tools",
+		},
+		{
+			Name:     "catalog_linux_amd64.att.json.asc",
+			FilePath: fmt.Sprintf("%s/catalog/%s/linux/amd64/catalog.att.json.asc", toolRoot, version),
+			URLPath:  fmt.Sprintf("/dbt-tools/catalog/%s/linux/amd64/catalog.att.json.asc", version),
+			Repo:     "dbt-tools",
+		},
+		{
+			Name:     "catalog_linux_amd64.sbom.json",
+			FilePath: fmt.Sprintf("%s/catalog/%s/linux/amd64/catalog.sbom.json", toolRoot, version),
+			URLPath:  fmt.Sprintf("/dbt-tools/catalog/%s/linux/amd64/catalog.sbom.json", version),
+			Repo:     "dbt-tools",
+		},
+		{
+			Name:     "catalog_linux_amd64.sbom.json.asc",
+			FilePath: fmt.Sprintf("%s/catalog/%s/linux/amd64/catalog.sbom.json.asc", toolRoot, version),
+			URLPath:  fmt.Sprintf("/dbt-tools/catalog/%s/linux/amd64/catalog.sbom.json.asc", version),
+			Repo:     "dbt-tools",
+		},
+		{
+			Name:     "dbt_linux_amd64.att.json",
+			FilePath: fmt.Sprintf("%s/%s/linux/amd64/dbt.att.json", dbtRoot, version),
+			URLPath:  fmt.Sprintf("/dbt/%s/linux/amd64/dbt.att.json", version),
+			Repo:     "dbt",
+		},
+		{
+			Name:     "dbt_linux_amd64.att.json.asc",
+			FilePath: fmt.Sprintf("%s/%s/linux/amd64/dbt.att.json.asc", dbtRoot, version),
+			URLPath:  fmt.Sprintf("/dbt/%s/linux/amd64/dbt.att.json.asc", version),
+			Repo:     "dbt",
+		},
+		{
+			Name:     "dbt_linux_amd64.sbom.json",
+			FilePath: fmt.Sprintf("%s/%s/linux/amd64/dbt.sbom.json", dbtRoot, version),
+			URLPath:  fmt.Sprintf("/dbt/%s/linux/amd64/dbt.sbom.json", version),
+			Repo:     "dbt",
+		},
+		{
+			Name:     "dbt_linux_amd64.sbom.json.asc",
+			FilePath: fmt.Sprintf("%s/%s/linux/amd64/dbt.sbom.json.asc", dbtRoot, version),
+			URLPath:  fmt.Sprintf("/dbt/%s/linux/amd64/dbt.sbom.json.asc", version),
+			Repo:     "dbt",
+		},
 		{
 			Name:     "catalog-description.txt",
 			FilePath: fmt.Sprintf("%s/catalog/%s/description.txt", toolRoot, version),

@@ -125,6 +125,13 @@ func SetupTestRepo(tmpDir string) (truststoreContent string, err error) {
 		return truststoreContent, err
 	}
 
+	// Latest version carries attestations; older versions are the no-attestation fixtures.
+	err = writeAttestationArtifacts(dbtRoot, LatestVersion, "dbt",
+		Dbt300Attestation, Dbt300AttestationSig, Dbt300SBOM, Dbt300SBOMSig)
+	if err != nil {
+		return truststoreContent, err
+	}
+
 	// Write catalog binaries for all test versions
 	err = writeCatalogArtifact(toolRoot, OldVersion,
 		Catalog100Binary, Catalog100Checksum, Catalog100Signature,
@@ -143,6 +150,12 @@ func SetupTestRepo(tmpDir string) (truststoreContent string, err error) {
 	err = writeCatalogArtifact(toolRoot, LatestVersion,
 		Catalog300Binary, Catalog300Checksum, Catalog300Signature,
 		Catalog300Description, Catalog300DescriptionSig)
+	if err != nil {
+		return truststoreContent, err
+	}
+
+	err = writeAttestationArtifacts(filepath.Join(toolRoot, "catalog"), LatestVersion, "catalog",
+		Catalog300Attestation, Catalog300AttestationSig, Catalog300SBOM, Catalog300SBOMSig)
 	if err != nil {
 		return truststoreContent, err
 	}
@@ -177,6 +190,43 @@ func writeArtifact(root, version, name string, binary []byte, checksum, signatur
 	err = os.WriteFile(signaturePath, []byte(signature), 0644)
 	if err != nil {
 		err = errors.Wrapf(err, "failed to write %s", signaturePath)
+		return err
+	}
+
+	return err
+}
+
+// writeAttestationArtifacts writes a tool's provenance attestation (.att.json) and SBOM
+// attestation (.sbom.json), each with its detached armored signature, alongside the
+// binary — mirroring the repository layout dbt's third verification leg consumes.
+func writeAttestationArtifacts(root, version, name string, attestation, attestationSig, sbom, sbomSig string) (err error) {
+	dir := filepath.Join(root, version, "linux", "amd64")
+
+	attPath := filepath.Join(dir, fmt.Sprintf("%s.att.json", name))
+	err = os.WriteFile(attPath, []byte(attestation), 0644)
+	if err != nil {
+		err = errors.Wrapf(err, "failed to write %s", attPath)
+		return err
+	}
+
+	attSigPath := fmt.Sprintf("%s.asc", attPath)
+	err = os.WriteFile(attSigPath, []byte(attestationSig), 0644)
+	if err != nil {
+		err = errors.Wrapf(err, "failed to write %s", attSigPath)
+		return err
+	}
+
+	sbomPath := filepath.Join(dir, fmt.Sprintf("%s.sbom.json", name))
+	err = os.WriteFile(sbomPath, []byte(sbom), 0644)
+	if err != nil {
+		err = errors.Wrapf(err, "failed to write %s", sbomPath)
+		return err
+	}
+
+	sbomSigPath := fmt.Sprintf("%s.asc", sbomPath)
+	err = os.WriteFile(sbomSigPath, []byte(sbomSig), 0644)
+	if err != nil {
+		err = errors.Wrapf(err, "failed to write %s", sbomSigPath)
 		return err
 	}
 

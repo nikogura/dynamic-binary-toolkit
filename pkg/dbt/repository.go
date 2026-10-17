@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
@@ -720,6 +721,129 @@ func (dbt *DBT) S3FetchFile(fileURL string, meta S3Meta, outFile *os.File) (err 
 	}
 
 	return err
+}
+
+// FetchFileIfPresent fetches fileURL to destPath when the file exists on the repository.
+// Absence (HTTP 404 or S3 not-found) is reported as found=false and is NOT an error: it is
+// how the optional attestation policy discovers a tool published without attestations.
+// Any other failure — auth rejection, connection failure, server error — IS an error.
+// Confusing a broken repository with a missing artifact would silently weaken the chain
+// from "verify what is there" to "verify nothing", so absence and failure are kept
+// strictly distinct.
+func (dbt *DBT) FetchFileIfPresent(fileURL string, destPath string) (found bool, err error) {
+	isS3, s3Meta := S3Url(fileURL)
+	if isS3 {
+		found, err = dbt.S3FetchFileIfPresent(fileURL, s3Meta, destPath)
+		return found, err
+	}
+
+	client := &http.Client{
+		Timeout: 300 * time.Second,
+	}
+
+	ctx := context.Background()
+
+	req, reqErr := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if reqErr != nil {
+		err = errors.Wrapf(reqErr, "failed to create request for url: %s", fileURL)
+		return found, err
+	}
+
+	err = dbt.AuthHeaders(req)
+	if err != nil {
+		err = errors.Wrap(err, "failed adding auth headers")
+		return found, err
+	}
+
+	resp, doErr := client.Do(req)
+	if doErr != nil {
+		err = errors.Wrap(doErr, fmt.Sprintf("error fetching file from %q", fileURL))
+		return found, err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return found, err
+	}
+
+	if resp.StatusCode > 399 {
+		err = fmt.Errorf("unable to make request to %s: %d %s", fileURL, resp.StatusCode, resp.Status)
+		return found, err
+	}
+
+	out, createErr := os.Create(destPath)
+	if createErr != nil {
+		err = createErr
+		return found, err
+	}
+
+	defer out.Close()
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return found, err
+	}
+
+	found = true
+
+	return found, err
+}
+
+// S3FetchFileIfPresent fetches fileURL from S3 to destPath when the object exists.
+// A missing object (HeadObject NotFound / GetObject NoSuchKey) is found=false, not an error;
+// every other failure is an error.
+func (dbt *DBT) S3FetchFileIfPresent(fileURL string, meta S3Meta, destPath string) (found bool, err error) {
+	headSvc := s3.New(dbt.S3Session)
+
+	headOptions := &s3.HeadObjectInput{
+		Bucket: aws.String(meta.Bucket),
+		Key:    aws.String(meta.Key),
+	}
+
+	_, headErr := headSvc.HeadObject(headOptions)
+	if headErr != nil {
+		if isS3NotFoundError(headErr) {
+			return found, err
+		}
+
+		err = errors.Wrapf(headErr, "failed to get metadata for %s", fileURL)
+		return found, err
+	}
+
+	out, createErr := os.Create(destPath)
+	if createErr != nil {
+		err = createErr
+		return found, err
+	}
+
+	defer out.Close()
+
+	err = dbt.S3FetchFile(fileURL, meta, out)
+	if err != nil {
+		return found, err
+	}
+
+	found = true
+
+	return found, err
+}
+
+// isS3NotFoundError reports whether an AWS SDK error is S3 saying the object does not
+// exist. HeadObject returns NotFound (404 with no body to parse); GetObject returns
+// NoSuchKey. Both mean absent; neither means broken.
+func isS3NotFoundError(headErr error) (notFound bool) {
+	var awsErr awserr.Error
+
+	if !errors.As(headErr, &awsErr) {
+		return notFound
+	}
+
+	if awsErr.Code() == "NotFound" || awsErr.Code() == s3.ErrCodeNoSuchKey {
+		notFound = true
+	}
+
+	return notFound
 }
 
 // S3ToolExists detects whether a tool exists in S3 by looking at the top level folder for the tool.

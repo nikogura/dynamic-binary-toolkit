@@ -320,7 +320,7 @@ func TestDbtUpgradeInPlace(t *testing.T) {
 
 			assert.False(t, ok, "Old version should not show up as current.")
 
-			err = tc.obj.UpgradeInPlace(fileName)
+			err = tc.obj.UpgradeInPlace(tc.homedir, fileName)
 			if err != nil {
 				t.Errorf("Error upgrading in place: %s", err)
 			}

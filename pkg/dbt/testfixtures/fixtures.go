@@ -68,6 +68,18 @@ var Dbt300Checksum string
 //go:embed repo/dbt/3.0.0/linux/amd64/dbt.asc
 var Dbt300Signature string
 
+//go:embed repo/dbt/3.0.0/linux/amd64/dbt.att.json
+var Dbt300Attestation string
+
+//go:embed repo/dbt/3.0.0/linux/amd64/dbt.att.json.asc
+var Dbt300AttestationSig string
+
+//go:embed repo/dbt/3.0.0/linux/amd64/dbt.sbom.json
+var Dbt300SBOM string
+
+//go:embed repo/dbt/3.0.0/linux/amd64/dbt.sbom.json.asc
+var Dbt300SBOMSig string
+
 // Catalog100Binary is the catalog binary for test version 1.0.0.
 //
 //go:embed repo/dbt-tools/catalog/1.0.0/linux/amd64/catalog
@@ -112,6 +124,18 @@ var Catalog300Checksum string
 
 //go:embed repo/dbt-tools/catalog/3.0.0/linux/amd64/catalog.asc
 var Catalog300Signature string
+
+//go:embed repo/dbt-tools/catalog/3.0.0/linux/amd64/catalog.att.json
+var Catalog300Attestation string
+
+//go:embed repo/dbt-tools/catalog/3.0.0/linux/amd64/catalog.att.json.asc
+var Catalog300AttestationSig string
+
+//go:embed repo/dbt-tools/catalog/3.0.0/linux/amd64/catalog.sbom.json
+var Catalog300SBOM string
+
+//go:embed repo/dbt-tools/catalog/3.0.0/linux/amd64/catalog.sbom.json.asc
+var Catalog300SBOMSig string
 
 //go:embed repo/dbt-tools/catalog/3.0.0/description.txt
 var Catalog300Description string

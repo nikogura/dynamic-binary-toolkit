@@ -410,7 +410,11 @@ The reposerver expects this directory structure under its server root (`/var/dbt
 │   │   └── <os>/<arch>/
 │   │       ├── dbt                          # Binary
 │   │       ├── dbt.asc                      # GPG signature
-│   │       └── dbt.sha256                   # SHA256 checksum
+│   │       ├── dbt.sha256                   # SHA256 checksum
+│   │       ├── dbt.att.json                 # SLSA provenance attestation (optional)
+│   │       ├── dbt.att.json.asc             # …and its signature
+│   │       ├── dbt.sbom.json                # CycloneDX SBOM attestation (optional)
+│   │       └── dbt.sbom.json.asc            # …and its signature
 │   └── installer/
 │       └── <os>/<arch>/
 │           └── dbt-installer                # Pre-built installer
@@ -423,7 +427,11 @@ The reposerver expects this directory structure under its server root (`/var/dbt
                 ├── <toolname>               # Binary
                 ├── <toolname>.asc           # GPG signature
                 ├── <toolname>.sha256        # SHA256 checksum
-                └── <toolname>.md5           # MD5 checksum (optional)
+                ├── <toolname>.md5           # MD5 checksum (optional)
+                ├── <toolname>.att.json      # SLSA provenance attestation (optional)
+                ├── <toolname>.att.json.asc  # …and its signature
+                ├── <toolname>.sbom.json     # CycloneDX SBOM attestation (optional)
+                └── <toolname>.sbom.json.asc # …and its signature
 ```
 
 #### Path Separation: `/dbt/` vs `/dbt-tools/`
@@ -706,6 +714,112 @@ curl -X PUT -H "Authorization: Bearer $TOKEN" \
   https://dbt.example.com/dbt/truststore
 ```
 
+## Attestation Verification (Third Leg)
+
+Every tool run verifies three things: the **checksum** (the bytes on disk are the bytes the repo published), the **signature** (they were signed by an identity in the truststore), and — when the repository publishes them — the **attestations** (the bytes carry a signed in-toto statement binding them to build provenance and an SBOM).
+
+The two attestation files sit beside the binary, exactly like the checksum and signature files:
+
+| File | Contents |
+|------|----------|
+| `<tool>.att.json` | in-toto Statement v1 with a SLSA provenance v1.0 predicate |
+| `<tool>.sbom.json` | in-toto Statement v1 whose predicate is a CycloneDX BOM |
+
+Each is signed like any other file: a detached armored GPG signature at `<file>.asc`, verified against the same truststore as the binary.
+
+**The digest is the spine.** Each statement names exactly one subject — the tool, by name — and the subject's `sha256` must equal the binary's checksum. A statement whose subject names some other digest is a statement about some other artifact, and dbt refuses it rather than downgrading to a warning. The binding is what makes the SBOM believable: an SBOM with no binding is a forgeable text file.
+
+**Failure semantics are fail-closed:**
+
+| State | `optional` policy | `required` policy |
+|-------|-------------------|--------------------|
+| Attestations absent | run | **refuse** |
+| Attestations present, valid, bound | run | run |
+| Attestations present but broken (bad signature, wrong digest, malformed, half-published) | **refuse** | **refuse** |
+
+`optional` is the default because repos full of tools published before attestations existed still work. `required` is for repos whose publishing toolchain emits attestations — set it per-server with `"attestationPolicy": "required"`, or bake it into your organization's installer at build time:
+
+```bash
+go build -ldflags "-X main.attestationPolicy=required ..." ./cmd/dbt-installer
+```
+
+(Orgs that need it enforced regardless of user config should set the policy in the installer and treat it as MDM territory — dbt verifies what its config says, and a user who owns their config can always change it.)
+
+### The Producer Contract
+
+A tool's attestation files must be in-toto Statement v1 documents with:
+
+- `_type`: `https://in-toto.io/Statement/v1`
+- exactly **one** subject, whose `name` is the tool's binary name and whose `digest.sha256` is the binary's SHA256 checksum
+- `predicateType`: `https://slsa.dev/provenance/v1` for `.att.json`, `https://cyclonedx.org/bom` for `.sbom.json`
+- a non-empty predicate (dbt binds and authenticates; it does not interpret policy)
+
+Multi-subject statements and versioned CycloneDX predicate URIs are refused: the contract is pinned, and loosening it is an explicit, documented change.
+
+### Publishing Attestations
+
+When publishing a tool, generate and upload the attestation files alongside the binary, checksum, and signature:
+
+```bash
+# Provenance attestation (subject digest = the binary's sha256)
+cat > mytool.att.json <<EOF
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [{"name": "mytool", "digest": {"sha256": "$(cat mytool.sha256)"}}],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildDefinition": {
+      "buildType": "https://example.com/build/myorg/mytool",
+      "externalParameters": {
+        "repository": "https://github.com/myorg/mytool",
+        "ref": "refs/tags/v1.0.0"
+      },
+      "resolvedDependencies": [
+        {
+          "uri": "git+https://github.com/myorg/mytool@refs/tags/v1.0.0",
+          "digest": {"sha256": "$(git rev-parse v1.0.0)"}
+        }
+      ]
+    },
+    "runDetails": {
+      "builder": {"id": "your-email@example.com"}
+    }
+  }
+}
+EOF
+gpg --detach-sign --armor mytool.att.json
+
+# SBOM attestation (same subject, CycloneDX predicate)
+cat > mytool.sbom.json <<EOF
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [{"name": "mytool", "digest": {"sha256": "$(cat mytool.sha256)"}}],
+  "predicateType": "https://cyclonedx.org/bom",
+  "predicate": {
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.6",
+    "version": 1,
+    "components": [
+      {"type": "library", "name": "github.com/spf13/cobra", "version": "v1.8.1", "purl": "pkg:golang/github.com/spf13/cobra@v1.8.1"}
+    ]
+  }
+}
+EOF
+gpg --detach-sign --armor mytool.sbom.json
+
+# Upload alongside the other artifacts (repeat for each platform)
+curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @mytool.att.json \
+  https://dbt.example.com/dbt-tools/mytool/1.0.0/linux/amd64/mytool.att.json
+curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @mytool.att.json.asc \
+  https://dbt.example.com/dbt-tools/mytool/1.0.0/linux/amd64/mytool.att.json.asc
+curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @mytool.sbom.json \
+  https://dbt.example.com/dbt-tools/mytool/1.0.0/linux/amd64/mytool.sbom.json
+curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @mytool.sbom.json.asc \
+  https://dbt.example.com/dbt-tools/mytool/1.0.0/linux/amd64/mytool.sbom.json.asc
+```
+
+Publish both files or neither — a half-attested tool is treated as a botched publish and refused under any policy.
+
 ## Client Configuration
 
 DBT uses a config file at `~/.dbt/conf/dbt.json`, created automatically by the installer.  If you need to configure it manually:
@@ -761,6 +875,7 @@ DBT uses a config file at `~/.dbt/conf/dbt.json`, created automatically by the i
 | `oidcClientSecret` | OAuth2 client secret (if required) |
 | `oidcUsername` | Username for OIDC authentication |
 | `connectorId` | Connector ID (e.g., `"ssh"` for Dex SSH-OIDC) |
+| `attestationPolicy` | `"required"` or `"optional"` (default). See [Attestation Verification](#attestation-verification-third-leg). An unrecognized value fails config load — a typo never silently downgrades the chain. |
 
 ### Legacy Single-Server Configuration
 
@@ -935,6 +1050,7 @@ DBT will only execute binaries that:
 - Have a valid GPG signature from a key in the truststore
 - Pass SHA256 checksum verification
 - Were downloaded from a configured trusted repository
+- When attestations are published, carry valid, signed, digest-bound provenance and SBOM attestations (see [Attestation Verification](#attestation-verification-third-leg)) — refused when broken under any policy, and refused when absent under a `required` policy
 
 If any verification fails, DBT stops immediately.
 

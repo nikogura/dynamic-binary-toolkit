@@ -145,3 +145,32 @@ func TestIsInPath(t *testing.T) {
 		assert.False(t, isInPath("/nonexistent/path/that/should/not/be/in/PATH"))
 	})
 }
+
+func TestBuildServerConfigAttestationPolicy(t *testing.T) {
+	t.Parallel()
+
+	t.Run("policy set is written to server config", func(t *testing.T) {
+		t.Parallel()
+
+		config := &Config{
+			ServerURL:         "https://dbt.example.com",
+			AttestationPolicy: "required",
+		}
+
+		server := config.BuildServerConfig("")
+
+		assert.Equal(t, "required", server.AttestationPolicy, "attestation policy must be written to the server config")
+	})
+
+	t.Run("empty policy omits the field", func(t *testing.T) {
+		t.Parallel()
+
+		config := &Config{
+			ServerURL: "https://dbt.example.com",
+		}
+
+		server := config.BuildServerConfig("")
+
+		assert.Empty(t, server.AttestationPolicy, "empty attestation policy must stay omitted (optional default)")
+	})
+}

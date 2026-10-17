@@ -68,6 +68,76 @@ cp "$GPG_DIR/public-key.asc" "$REPO_DIR/dbt/truststore"
 
 echo "=== Generating dummy binaries ==="
 
+# generate_attestations writes and signs the SLSA provenance attestation (.att.json) and
+# the CycloneDX SBOM attestation (.sbom.json) for a binary, following the same
+# convention as the checksum (.sha256) and signature (.asc) files. These are the artifacts
+# dbt's third verification leg consumes.
+generate_attestations() {
+    local binary="$1"
+    local name
+    name=$(basename "$binary")
+    local checksum
+    checksum=$(sha256sum "$binary" | cut -d' ' -f1)
+
+    local att="$binary.att.json"
+    cat > "$att" <<EOF
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "$name",
+      "digest": {"sha256": "$checksum"}
+    }
+  ],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildDefinition": {
+      "buildType": "https://gomason.nikogura.com/build/v1",
+      "externalParameters": {
+        "package": "github.com/nikogura/dynamic-binary-toolkit",
+        "version": "test"
+      },
+      "resolvedDependencies": []
+    },
+    "runDetails": {
+      "builder": {"id": "tester@nikogura.com"}
+    }
+  }
+}
+EOF
+    gpg --batch --yes --armor --detach-sign --local-user tester@nikogura.com "$att"
+
+    local sbom="$binary.sbom.json"
+    cat > "$sbom" <<EOF
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "$name",
+      "digest": {"sha256": "$checksum"}
+    }
+  ],
+  "predicateType": "https://cyclonedx.org/bom",
+  "predicate": {
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.6",
+    "version": 1,
+    "components": [
+      {
+        "type": "library",
+        "name": "github.com/spf13/cobra",
+        "version": "v1.8.1",
+        "purl": "pkg:golang/github.com/spf13/cobra@v1.8.1"
+      }
+    ]
+  }
+}
+EOF
+    gpg --batch --yes --armor --detach-sign --local-user tester@nikogura.com "$sbom"
+
+    echo "  Created attestations for $name ($checksum)"
+}
+
 # Generate dbt binaries for each test version
 for VERSION in "$OLD_VERSION" "$NEW_VERSION" "$LATEST_VERSION"; do
     BINARY="$REPO_DIR/dbt/$VERSION/linux/amd64/dbt"
@@ -88,6 +158,12 @@ EOF
     gpg --batch --yes --armor --detach-sign --local-user tester@nikogura.com "$BINARY"
 
     echo "Created dbt $VERSION binary with checksum and signature"
+
+    # Only the latest version carries attestations: older versions double as the
+    # "published without attestations" fixtures for dbt's policy tests.
+    if [ "$VERSION" = "$LATEST_VERSION" ]; then
+        generate_attestations "$BINARY"
+    fi
 done
 
 # Generate catalog binaries for each test version
@@ -118,6 +194,11 @@ EOF
     gpg --batch --yes --armor --detach-sign --local-user tester@nikogura.com "$BINARY"
 
     echo "Created catalog $VERSION binary with checksum and signature"
+
+    # Only the latest version carries attestations (see dbt loop above).
+    if [ "$VERSION" = "$LATEST_VERSION" ]; then
+        generate_attestations "$BINARY"
+    fi
 done
 
 # Generate install scripts

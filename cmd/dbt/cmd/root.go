@@ -134,7 +134,7 @@ func Run(cmd *cobra.Command, args []string) {
 
 		if !ok {
 			log.Printf("Downloading and verifying new version of %s.", dbt.BrandName)
-			upgradeErr := dbtObj.UpgradeInPlace(dbtBinary)
+			upgradeErr := dbtObj.UpgradeInPlace(homedir, dbtBinary)
 			if upgradeErr != nil {
 				upgradeErr = fmt.Errorf("upgrade in place failed: %w", upgradeErr)
 				log.Fatalf("Error: %s", upgradeErr)

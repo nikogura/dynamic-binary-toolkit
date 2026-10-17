@@ -26,30 +26,32 @@ import (
 
 // Config holds the installer configuration, typically injected at build time.
 type Config struct {
-	ServerURL        string
-	ServerName       string
-	ToolsURL         string
-	S3Region         string
-	IssuerURL        string
-	OIDCAudience     string
-	OIDCClientID     string
-	OIDCClientSecret string
-	ConnectorID      string
-	Version          string
+	ServerURL         string
+	ServerName        string
+	ToolsURL          string
+	S3Region          string
+	IssuerURL         string
+	OIDCAudience      string
+	OIDCClientID      string
+	OIDCClientSecret  string
+	ConnectorID       string
+	AttestationPolicy string
+	Version           string
 }
 
 // ServerConfig represents a server entry in the dbt config file.
 type ServerConfig struct {
-	Repository       string `json:"repository"`
-	Truststore       string `json:"truststore,omitempty"`
-	ToolsRepository  string `json:"toolsRepository,omitempty"`
-	AuthType         string `json:"authType,omitempty"`
-	IssuerURL        string `json:"issuerUrl,omitempty"`
-	OIDCAudience     string `json:"oidcAudience,omitempty"`
-	OIDCClientID     string `json:"oidcClientId,omitempty"`
-	OIDCClientSecret string `json:"oidcClientSecret,omitempty"`
-	OIDCUsername     string `json:"oidcUsername,omitempty"`
-	ConnectorID      string `json:"connectorId,omitempty"`
+	Repository        string `json:"repository"`
+	Truststore        string `json:"truststore,omitempty"`
+	ToolsRepository   string `json:"toolsRepository,omitempty"`
+	AuthType          string `json:"authType,omitempty"`
+	IssuerURL         string `json:"issuerUrl,omitempty"`
+	OIDCAudience      string `json:"oidcAudience,omitempty"`
+	OIDCClientID      string `json:"oidcClientId,omitempty"`
+	OIDCClientSecret  string `json:"oidcClientSecret,omitempty"`
+	OIDCUsername      string `json:"oidcUsername,omitempty"`
+	ConnectorID       string `json:"connectorId,omitempty"`
+	AttestationPolicy string `json:"attestationPolicy,omitempty"`
 }
 
 // DbtConfig represents the dbt configuration file structure.
@@ -138,6 +140,10 @@ func (c *Config) BuildServerConfig(username string) (server ServerConfig) {
 		Repository:      c.ServerURL + "/" + BrandBinary,
 		Truststore:      c.ServerURL + "/" + BrandBinary + "/truststore",
 		ToolsRepository: c.ToolsURL,
+	}
+
+	if c.AttestationPolicy != "" {
+		server.AttestationPolicy = c.AttestationPolicy
 	}
 
 	if c.IssuerURL != "" {

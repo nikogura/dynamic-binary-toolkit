@@ -1,0 +1,23 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "dbt",
+      "digest": {"sha256": "d7da2eeca9565a81be5c6e6c4e20634650c8ec39f26b14066ecf9de0584d6620"}
+    }
+  ],
+  "predicateType": "https://slsa.dev/provenance/v1",
+  "predicate": {
+    "buildDefinition": {
+      "buildType": "https://gomason.nikogura.com/build/v1",
+      "externalParameters": {
+        "package": "github.com/nikogura/dynamic-binary-toolkit",
+        "version": "test"
+      },
+      "resolvedDependencies": []
+    },
+    "runDetails": {
+      "builder": {"id": "tester@nikogura.com"}
+    }
+  }
+}

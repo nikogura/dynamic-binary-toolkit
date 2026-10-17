@@ -1,0 +1,23 @@
+{
+  "_type": "https://in-toto.io/Statement/v1",
+  "subject": [
+    {
+      "name": "catalog",
+      "digest": {"sha256": "d2dcdae69bf8e12db23d08b4ed76f81fc65987bebdd0778e9b06f06ef7212c13"}
+    }
+  ],
+  "predicateType": "https://cyclonedx.org/bom",
+  "predicate": {
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.6",
+    "version": 1,
+    "components": [
+      {
+        "type": "library",
+        "name": "github.com/spf13/cobra",
+        "version": "v1.8.1",
+        "purl": "pkg:golang/github.com/spf13/cobra@v1.8.1"
+      }
+    ]
+  }
+}
